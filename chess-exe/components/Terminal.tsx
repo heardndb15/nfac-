@@ -1,4 +1,5 @@
 'use client';
+/* eslint-disable @typescript-eslint/no-unused-vars */
 
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -27,12 +28,17 @@ function logColor(text: string): string {
 }
 
 export default function Terminal({ corruptionLevel, extraLogs }: TerminalProps) {
-  const [logs, setLogs] = useState<LogEntry[]>([
-    { id: '0', ts: getTimestamp(), text: '[SYS] Chess.exe v1.0.0 initialized', color: '#00ff41' },
-    { id: '1', ts: getTimestamp(), text: '[INFO] Awaiting player...', color: '#00ff41' },
-  ]);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevExtra = useRef<string[]>([]);
+
+  // Initialize logs client-side only to avoid hydration mismatch
+  useEffect(() => {
+    setLogs([
+      { id: 'init-0', ts: getTimestamp(), text: '[SYS] Chess.exe v1.0.0 initialized', color: '#00ff41' },
+      { id: 'init-1', ts: getTimestamp(), text: '[INFO] Awaiting player...', color: '#00ff41' },
+    ]);
+  }, []);
 
   // Auto-generate system logs
   useEffect(() => {
