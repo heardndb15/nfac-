@@ -97,7 +97,7 @@ export default function ChessBoard({
       let result;
       try {
         result = chess.move({ from: sourceSquare, to: targetSquare, promotion: 'q' });
-      } catch {
+      } catch (err) {
         return false;
       }
       if (!result) return false;
@@ -151,7 +151,8 @@ export default function ChessBoard({
       <Chessboard
         position={fen}
         onPieceDrop={onPieceDrop}
-        isDraggablePiece={({ piece }) => piece.startsWith('w') && !isThinking}
+        arePiecesDraggable={!isThinking}
+        isDraggablePiece={({ piece }) => piece && piece[0] === 'w' && !isThinking}
         customDarkSquareStyle={{ backgroundColor: darkSquare }}
         customLightSquareStyle={{ backgroundColor: lightSquare }}
         customBoardStyle={{
