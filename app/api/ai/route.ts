@@ -14,8 +14,9 @@ export async function POST(req: Request) {
       ? behavior.moves.reduce((a: any, m: any) => a + m.timeMs, 0) / behavior.moves.length / 1000
       : 0;
       
-    const prompt = `You are a psychological horror AI playing chess against a human.
-The human's current state: 
+    const prompt = `You are a psychological horror AI playing chess against a human detective.
+The human's identified name (Agent ID) is: ${profile.agentId || 'Unknown'}. Use their name occasionally to creep them out.
+Their current state: 
 - Total play time this session: ${totalTime} seconds.
 - Average move time: ${avgTimeSec.toFixed(1)} seconds.
 - Total moves: ${behavior.moves.length}.

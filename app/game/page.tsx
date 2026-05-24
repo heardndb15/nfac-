@@ -19,6 +19,7 @@ import {
 } from '@/lib/aiEngine';
 import { getMoveLog } from '@/lib/events';
 import { GAME_CASES } from '@/lib/cases';
+import { gameProgressStore, GameProgress } from '@/lib/game-state';
 
 const ChessBoard = dynamic(() => import('@/components/ChessBoard'), { ssr: false });
 
@@ -34,11 +35,15 @@ export default function GamePage() {
   const [psychProfile, setPsychProfile] = useState<ReturnType<typeof generatePsychProfile> | null>(null);
   const [fakeTakeover, setFakeTakeover] = useState(false);
   const [profile, setProfile] = useState<PlayerProfile>(() => loadPlayerProfile());
+  const [progress, setProgress] = useState<GameProgress | null>(null);
   
   const [activeCase, setActiveCase] = useState<any>(null);
   const [playerSuspect, setPlayerSuspect] = useState<string | null>(null);
 
   useEffect(() => {
+    const p = gameProgressStore.getProgress();
+    setProgress(p);
+
     const caseId = localStorage.getItem('chess_exe_case');
     const suspectId = localStorage.getItem('chess_exe_suspect');
     if (caseId) setActiveCase(GAME_CASES.find(c => c.id === caseId));
@@ -54,31 +59,21 @@ export default function GamePage() {
     positionHistory: [],
   });
 
-  // Corruption rises over time
+  // Corruption rises over time, faster in later episodes
   useEffect(() => {
+    const episodeMultiplier = (progress?.currentEpisode || 1) * 0.5;
     const iv = setInterval(() => {
-      setCorruptionLevel(prev => Math.min(1, prev + 0.0015));
+      setCorruptionLevel(prev => Math.min(1, prev + 0.0015 * episodeMultiplier));
     }, 1000);
     return () => clearInterval(iv);
-  }, []);
+  }, [progress]);
 
   // Periodic AI dialogue
   useEffect(() => {
-    const delay = Math.max(5000, 12000 - corruptionLevel * 8000);
+    const delay = Math.max(4000, 10000 - (corruptionLevel * 6000));
     const iv = setInterval(async () => {
       if (!gameOver) {
-        try {
-          const res = await fetch('/api/ai', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ profile, behavior: behaviorRef.current, corruptionLevel })
-          });
-          const data = await res.json();
-          setDialogue(data.text);
-        } catch (err) {
-          console.error(err);
-          setDialogue(generateDialogue(profile, behaviorRef.current, corruptionLevel));
-        }
+        setDialogue(generateDialogue(profile, behaviorRef.current, corruptionLevel));
       }
     }, delay);
     return () => clearInterval(iv);
@@ -86,13 +81,13 @@ export default function GamePage() {
 
   // Fake system takeover at high corruption
   useEffect(() => {
-    if (corruptionLevel > 0.75 && !gameOver) {
+    if (corruptionLevel > 0.7 && !gameOver) {
       const chance = setInterval(() => {
-        if (Math.random() < 0.08) {
+        if (Math.random() < 0.12) {
           setFakeTakeover(true);
-          setTimeout(() => setFakeTakeover(false), 2200);
+          setTimeout(() => setFakeTakeover(false), 2500);
         }
-      }, 8000);
+      }, 7000);
       return () => clearInterval(chance);
     }
   }, [corruptionLevel, gameOver]);
@@ -117,9 +112,9 @@ export default function GamePage() {
         checks: behaviorRef.current.checks + (move.wasCheck ? 1 : 0),
         positionHistory: [...behaviorRef.current.positionHistory, move.fen],
       };
-      // Captures boost corruption slightly
-      if (move.wasCapture) setCorruptionLevel(p => Math.min(1, p + 0.015));
-      if (move.wasCheck) setCorruptionLevel(p => Math.min(1, p + 0.02));
+      
+      // Gameplay behavior impacts dialogue
+      if (move.wasCapture) setCorruptionLevel(p => Math.min(1, p + 0.02));
     },
     []
   );
@@ -132,17 +127,26 @@ export default function GamePage() {
     (result: string) => {
       let finalMessage = result;
       let aiFinalLine = 'I will remember you.';
+      const isPlayerWin = result.toLowerCase().includes('win') || result.toLowerCase().includes('mate') && !result.toLowerCase().includes('black');
       
+      gameProgressStore.recordChessResult(isPlayerWin);
+
       if (activeCase) {
-        const isPlayerWin = result === 'Player wins';
         const isCorrectSuspect = playerSuspect === activeCase.correctSuspectId;
         
         if (isPlayerWin) {
-          finalMessage = isCorrectSuspect ? 'TARGET CONTAINED. You chose correctly and won.' : 'TARGET ESCAPED. You won, but suspected the wrong person.';
-          aiFinalLine = isCorrectSuspect ? 'I understand you now. You are dangerous.' : 'You are strong, but blind.';
+          gameProgressStore.completeCase(activeCase.id);
+          finalMessage = isCorrectSuspect ? 'TARGET CONTAINED. Identity verified.' : 'TARGET ESCAPED. Your logic was flawed.';
+          aiFinalLine = isCorrectSuspect ? 'You solved it. But the next case will be... personal.' : 'You won the match, but lost the investigation.';
         } else {
-          finalMessage = 'YOU WERE WRONG. Target eliminated you.';
-          aiFinalLine = isCorrectSuspect ? 'You knew the truth, but lacked the skill.' : 'Wrong suspect. Weak mind.';
+          finalMessage = 'SYSTEM ERROR. Target bypassed your defenses.';
+          aiFinalLine = 'A failure in logic. A failure in skill. You are useless to the system now.';
+        }
+
+        // Special Final Case Logic
+        if (activeCase.id === 'case-6') {
+          finalMessage = isPlayerWin ? 'IDENTITY BREACH. You broke the loop.' : 'SUBJECT NEUTRALIZED. Data harvest complete.';
+          aiFinalLine = isPlayerWin ? 'You actually won the final match? Impossible. The simulation... is breaking.' : 'You were just another data point. Goodbye.';
         }
       }
       
