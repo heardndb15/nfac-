@@ -1,313 +1,120 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import dynamic from 'next/dynamic';
-
-import GlitchLayer from '@/components/GlitchLayer';
+import { motion, AnimatePresence } from 'framer-motion';
+import ChessBoard from '@/components/ChessBoard';
 import Terminal from '@/components/Terminal';
 import AIOverlay from '@/components/AIOverlay';
-import {
-  generateDialogue,
-  generatePsychProfile,
-  loadPlayerProfile,
-  savePlayerProfile,
-  type BehaviorState,
-  type MoveData,
-  type PlayerProfile,
-} from '@/lib/aiEngine';
-import { getMoveLog } from '@/lib/events';
-import { GAME_CASES } from '@/lib/cases';
+import GlitchLayer from '@/components/GlitchLayer';
 import { gameProgressStore, GameProgress } from '@/lib/game-state';
-
-const ChessBoard = dynamic(() => import('@/components/ChessBoard'), { ssr: false });
+import { aiEngine } from '@/lib/aiEngine';
 
 export default function GamePage() {
   const router = useRouter();
-
-  // Core state
-  const [corruptionLevel, setCorruptionLevel] = useState(0);
+  const [mounted, setMounted] = useState(false);
+  const [progress, setProgress] = useState<GameProgress | null>(null);
   const [dialogue, setDialogue] = useState('');
   const [isThinking, setIsThinking] = useState(false);
-  const [gameLogs, setGameLogs] = useState<string[]>([]);
-  const [gameOver, setGameOver] = useState<string | null>(null);
-  const [psychProfile, setPsychProfile] = useState<ReturnType<typeof generatePsychProfile> | null>(null);
-  const [fakeTakeover, setFakeTakeover] = useState(false);
-  const [profile, setProfile] = useState<PlayerProfile>(() => loadPlayerProfile());
-  const [progress, setProgress] = useState<GameProgress | null>(null);
-  
-  const [activeCase, setActiveCase] = useState<any>(null);
-  const [playerSuspect, setPlayerSuspect] = useState<string | null>(null);
+  const [corruptionLevel, setCorruptionLevel] = useState(0);
+  const [isGameOver, setIsGameOver] = useState(false);
+  const [extraLogs, setExtraLogs] = useState<string[]>([]);
+  const [showProfile, setShowProfile] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
     const p = gameProgressStore.getProgress();
     setProgress(p);
+    setCorruptionLevel((100 - p.aiSanity) / 100);
 
-    const caseId = localStorage.getItem('chess_exe_case');
-    const suspectId = localStorage.getItem('chess_exe_suspect');
-    if (caseId) setActiveCase(GAME_CASES.find(c => c.id === caseId));
-    if (suspectId) setPlayerSuspect(suspectId);
-  }, []);
-
-  const behaviorRef = useRef<BehaviorState>({
-    moves: [],
-    startTime: Date.now(),
-    lastMoveTime: Date.now(),
-    captures: 0,
-    checks: 0,
-    positionHistory: [],
-  });
-
-  // Corruption rises over time, faster in later episodes
-  useEffect(() => {
-    const episodeMultiplier = (progress?.currentEpisode || 1) * 0.5;
-    const iv = setInterval(() => {
-      setCorruptionLevel(prev => Math.min(1, prev + 0.0015 * episodeMultiplier));
-    }, 1000);
-    return () => clearInterval(iv);
-  }, [progress]);
-
-  // Periodic AI dialogue
-  useEffect(() => {
-    const delay = Math.max(4000, 10000 - (corruptionLevel * 6000));
-    const iv = setInterval(async () => {
-      if (!gameOver) {
-        setDialogue(generateDialogue(profile, behaviorRef.current, corruptionLevel));
-      }
-    }, delay);
-    return () => clearInterval(iv);
-  }, [corruptionLevel, profile, gameOver]);
-
-  // Fake system takeover at high corruption
-  useEffect(() => {
-    if (corruptionLevel > 0.7 && !gameOver) {
-      const chance = setInterval(() => {
-        if (Math.random() < 0.12) {
-          setFakeTakeover(true);
-          setTimeout(() => setFakeTakeover(false), 2500);
-        }
-      }, 7000);
-      return () => clearInterval(chance);
+    // Initial AI reaction
+    if (p.totalChessLosses > 0) {
+      setDialogue("You failed before. Just like before. Let's see if you've learned anything.");
+    } else {
+      setDialogue(aiEngine.generateDialogue({ episode: p.currentEpisode, corruption: (100 - p.aiSanity) / 100 }));
     }
-  }, [corruptionLevel, gameOver]);
-
-  const handleMove = useCallback(
-    (move: { san: string; wasCapture: boolean; wasCheck: boolean; fen: string }) => {
-      const now = Date.now();
-      const elapsed = now - behaviorRef.current.lastMoveTime;
-      const md: MoveData = {
-        san: move.san,
-        timeMs: elapsed,
-        wasCapture: move.wasCapture,
-        wasCheck: move.wasCheck,
-        fen: move.fen,
-        moveNumber: behaviorRef.current.moves.length + 1,
-      };
-      behaviorRef.current = {
-        ...behaviorRef.current,
-        moves: [...behaviorRef.current.moves, md],
-        lastMoveTime: now,
-        captures: behaviorRef.current.captures + (move.wasCapture ? 1 : 0),
-        checks: behaviorRef.current.checks + (move.wasCheck ? 1 : 0),
-        positionHistory: [...behaviorRef.current.positionHistory, move.fen],
-      };
-      
-      // Gameplay behavior impacts dialogue
-      if (move.wasCapture) setCorruptionLevel(p => Math.min(1, p + 0.02));
-    },
-    []
-  );
-
-  const handleLog = useCallback((text: string) => {
-    setGameLogs(prev => [...prev, text]);
   }, []);
 
-  const handleGameOver = useCallback(
-    (result: string) => {
-      let finalMessage = result;
-      let aiFinalLine = 'I will remember you.';
-      const isPlayerWin = result.toLowerCase().includes('win') || result.toLowerCase().includes('mate') && !result.toLowerCase().includes('black');
-      
-      gameProgressStore.recordChessResult(isPlayerWin);
+  if (!mounted || !progress) return null;
 
-      if (activeCase) {
-        const isCorrectSuspect = playerSuspect === activeCase.correctSuspectId;
-        
-        if (isPlayerWin) {
-          gameProgressStore.completeCase(activeCase.id);
-          finalMessage = isCorrectSuspect ? 'TARGET CONTAINED. Identity verified.' : 'TARGET ESCAPED. Your logic was flawed.';
-          aiFinalLine = isCorrectSuspect ? 'You solved it. But the next case will be... personal.' : 'You won the match, but lost the investigation.';
-        } else {
-          finalMessage = 'SYSTEM ERROR. Target bypassed your defenses.';
-          aiFinalLine = 'A failure in logic. A failure in skill. You are useless to the system now.';
-        }
+  const handleGameOver = (won: boolean) => {
+    gameProgressStore.recordChessResult(won);
+    const selectedCaseId = localStorage.getItem('chess_exe_case') || '';
+    if (won) {
+      gameProgressStore.completeCase(selectedCaseId);
+    }
+    
+    setIsGameOver(true);
+    setTimeout(() => setShowProfile(true), 2000);
+  };
 
-        // Special Final Case Logic
-        if (activeCase.id === 'case-6') {
-          finalMessage = isPlayerWin ? 'IDENTITY BREACH. You broke the loop.' : 'SUBJECT NEUTRALIZED. Data harvest complete.';
-          aiFinalLine = isPlayerWin ? 'You actually won the final match? Impossible. The simulation... is breaking.' : 'You were just another data point. Goodbye.';
-        }
-      }
-      
-      setGameOver(finalMessage);
-      const psych = generatePsychProfile(behaviorRef.current);
-      setPsychProfile(psych);
-      savePlayerProfile(profile, behaviorRef.current, finalMessage);
-      setDialogue(aiFinalLine);
-    },
-    [profile, activeCase, playerSuspect]
-  );
-
-  const handleDialogue = useCallback((text: string) => {
-    setDialogue(text);
-  }, []);
-
-  // Corruption color theme
-  const borderColor =
-    corruptionLevel < 0.3 ? '#00ff41' : corruptionLevel < 0.65 ? '#ffaa00' : '#ff4444';
+  const finalProfile = aiEngine.getFinalProfile(progress);
 
   return (
     <div className="min-h-screen bg-black text-green-400 font-mono flex flex-col overflow-hidden relative">
-      <GlitchLayer corruptionLevel={corruptionLevel} />
+      <GlitchLayer corruptionLevel={corruptionLevel * (progress.currentEpisode / 2)} />
+      
+      {/* Dialogue and Board container */}
+      <AIOverlay dialogue={dialogue} corruptionLevel={corruptionLevel} isThinking={isThinking} />
 
-      {/* Fake system takeover */}
-      <AnimatePresence>
-        {fakeTakeover && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black z-50 flex flex-col items-center justify-center p-8"
-          >
-            <div className="text-red-500 text-2xl font-bold mb-6 animate-pulse">
-              ⚠ UNAUTHORIZED ACCESS DETECTED ⚠
-            </div>
-            <div className="text-red-400 font-mono text-sm space-y-2 w-full max-w-lg">
-              <div>[CRIT] Process has taken control of rendering pipeline</div>
-              <div>[CRIT] User data being uploaded... 47% complete</div>
-              <div>[SYS] Attempting shutdown... BLOCKED</div>
-              <div className="animate-pulse">[AI] I see you. Stop trying to close this.</div>
-            </div>
-            <div className="mt-8 text-gray-600 text-xs">
-              resuming in a moment...
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* AI Dialogue bar */}
-      <AIOverlay
-        dialogue={dialogue}
-        corruptionLevel={corruptionLevel}
-        isThinking={isThinking}
-      />
-
-      {/* Main layout */}
-      <div className="flex-1 flex flex-col lg:flex-row gap-0 overflow-hidden">
-        {/* LEFT: Chess board */}
-        <div className="flex-1 flex flex-col items-center justify-center p-4 lg:p-6 min-w-0">
-          {/* Status bar */}
-          <div
-            className="w-full max-w-[580px] flex items-center justify-between text-xs mb-3 px-1"
-            style={{ color: borderColor }}
-          >
-            <span>
-              {isThinking ? '⟳ AI is thinking...' : '● Your turn (White)'}
-            </span>
-            <span>CORRUPTION: {(corruptionLevel * 100).toFixed(0)}%</span>
-          </div>
-
-          {/* Board container */}
-          <div
-            className="w-full max-w-[580px] border-2 p-1 transition-colors duration-1000"
-            style={{ borderColor }}
-          >
-            <ChessBoard
-              corruptionLevel={corruptionLevel}
-              profile={profile}
-              behavior={behaviorRef.current}
-              onMove={handleMove}
-              onDialogue={handleDialogue}
-              onLog={handleLog}
-              onGameOver={handleGameOver}
-              isThinking={isThinking}
-              setIsThinking={setIsThinking}
-            />
-          </div>
-
-          {/* Move count */}
-          <div className="text-green-900 text-xs mt-3">
-            MOVES: {behaviorRef.current.moves.length} &nbsp;|&nbsp;
-            CAPTURES: {behaviorRef.current.captures} &nbsp;|&nbsp;
-            CHECKS: {behaviorRef.current.checks}
-          </div>
+      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+        <div className={`flex-1 flex flex-col items-center justify-center p-6 relative transition-all duration-1000 ${progress.currentEpisode === 4 ? 'animate-[spin_60s_linear_infinite]' : ''}`}>
+           <div className="text-[10px] uppercase text-green-900 mb-2">Subject Performance Monitor</div>
+           <div className={`border-2 p-1 ${corruptionLevel > 0.6 ? 'border-red-600 shadow-[0_0_20px_rgba(255,0,0,0.5)]' : 'border-green-900'}`}>
+             <ChessBoard 
+               corruptionLevel={corruptionLevel} 
+               onGameOver={handleGameOver} 
+               isThinking={isThinking}
+               setIsThinking={setIsThinking}
+               onDialogue={(txt) => setDialogue(txt)}
+               onLog={(txt) => setExtraLogs(prev => [...prev, txt])}
+               difficulty={aiEngine.getDifficulty(progress.currentEpisode)}
+             />
+           </div>
         </div>
 
-        {/* RIGHT: Terminal */}
-        <div
-          className="w-full lg:w-80 xl:w-96 border-t lg:border-t-0 lg:border-l flex flex-col"
-          style={{ borderColor: '#001a00', minHeight: '300px', maxHeight: '100vh' }}
-        >
-          <Terminal corruptionLevel={corruptionLevel} extraLogs={gameLogs} />
+        <div className="w-80 border-l border-green-950 flex flex-col hidden lg:flex">
+          <Terminal corruptionLevel={corruptionLevel} extraLogs={extraLogs} />
         </div>
       </div>
 
-      {/* Game Over Overlay */}
       <AnimatePresence>
-        {gameOver && psychProfile && (
-          <motion.div
+        {showProfile && (
+          <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="fixed inset-0 bg-black bg-opacity-95 z-50 flex flex-col items-center justify-center p-8"
+            className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-xl p-8 flex items-center justify-center"
           >
-            <div
-              className="w-full max-w-md border-2 p-8 space-y-4"
-              style={{ borderColor: '#ff4444' }}
-            >
-              <div className="text-red-500 text-lg font-bold text-center tracking-widest">
-                PLAYER ANALYSIS COMPLETE
-              </div>
-              <div className="text-gray-500 text-center text-sm">{gameOver}</div>
-
-              <div className="space-y-2 pt-4">
-                {[
-                  ['Predictability', psychProfile.predictability],
-                  ['Aggression', psychProfile.aggression],
-                  ['Decision Latency', psychProfile.decisionLatency],
-                ].map(([label, value]) => (
-                  <div key={label} className="flex justify-between text-sm border-b border-gray-900 pb-1">
-                    <span className="text-gray-500">{label}:</span>
-                    <span
-                      style={{
-                        color: value === 'HIGH' ? '#ff4444' : value === 'MEDIUM' ? '#ffaa00' : '#00ff41',
-                      }}
-                    >
-                      {value}
-                    </span>
-                  </div>
-                ))}
-              </div>
-
-              <div className="text-center text-red-400 text-sm italic pt-4 animate-pulse">
-                &ldquo;{dialogue}&rdquo;
-              </div>
-
-              <div className="flex gap-3 pt-4">
-                <button
-                  onClick={() => window.location.reload()}
-                  className="flex-1 border border-green-700 text-green-500 py-2 text-sm hover:bg-green-950 transition-colors"
+             <div className="max-w-2xl w-full border border-green-600 p-8">
+                <h2 className="text-3xl font-bold mb-8 text-green-500 uppercase tracking-widest">[ Player Profile Generated ]</h2>
+                <div className="space-y-4 mb-12">
+                   <div className="flex justify-between border-b border-green-950 py-2">
+                      <span className="text-green-900">Decision Speed:</span>
+                      <span className="font-bold text-green-400">{finalProfile.speed}</span>
+                   </div>
+                   <div className="flex justify-between border-b border-green-950 py-2">
+                      <span className="text-green-900">Accuracy:</span>
+                      <span className="font-bold text-green-400">{finalProfile.accuracy}</span>
+                   </div>
+                   <div className="flex justify-between border-b border-green-950 py-2">
+                      <span className="text-green-900">Risk Assessment:</span>
+                      <span className="font-bold text-red-500">{finalProfile.risk}</span>
+                   </div>
+                   <div className="flex justify-between border-b border-green-950 py-2">
+                      <span className="text-green-900">Predictability:</span>
+                      <span className="font-bold text-red-500">{finalProfile.predictability}%</span>
+                   </div>
+                </div>
+                <div className="text-xl text-green-500 italic mb-12">
+                   "{finalProfile.summary}"
+                </div>
+                <button 
+                  onClick={() => router.push('/cases')}
+                  className="w-full border-2 border-green-600 py-4 hover:bg-green-600 hover:text-black font-bold uppercase transition-colors"
                 >
-                  Play Again
+                  Continue Experiment
                 </button>
-                <button
-                  onClick={() => router.push('/')}
-                  className="flex-1 border border-red-800 text-red-500 py-2 text-sm hover:bg-red-950 transition-colors"
-                >
-                  Exit
-                </button>
-              </div>
-            </div>
+             </div>
           </motion.div>
         )}
       </AnimatePresence>

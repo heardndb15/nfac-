@@ -3,38 +3,32 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { Chess } from 'chess.js';
-import { getAIMove, generateDialogue, type BehaviorState, type PlayerProfile } from '@/lib/aiEngine';
-import { getMoveLog, getTimestamp } from '@/lib/events';
+import { getMoveLog } from '@/lib/events';
 
 const Chessboard = dynamic(() => import('react-chessboard').then(m => m.Chessboard), { ssr: false });
 
 interface ChessBoardProps {
   corruptionLevel: number;
-  profile: PlayerProfile;
-  behavior: BehaviorState;
-  onMove: (move: { san: string; wasCapture: boolean; wasCheck: boolean; fen: string }) => void;
+  onGameOver: (won: boolean) => void;
   onDialogue: (text: string) => void;
   onLog: (text: string) => void;
-  onGameOver: (result: string) => void;
   isThinking: boolean;
   setIsThinking: (v: boolean) => void;
+  difficulty: number;
 }
 
 export default function ChessBoard({
   corruptionLevel,
-  profile,
-  behavior,
-  onMove,
+  onGameOver,
   onDialogue,
   onLog,
-  onGameOver,
   isThinking,
   setIsThinking,
+  difficulty
 }: ChessBoardProps) {
   const chessRef = useRef(new Chess());
   const [fen, setFen] = useState(chessRef.current.fen());
   const [shake, setShake] = useState(false);
-  const moveStartRef = useRef<number>(Date.now());
   const gameOverFired = useRef(false);
 
   const triggerShake = () => {
@@ -46,123 +40,86 @@ export default function ChessBoard({
     const chess = chessRef.current;
     if (chess.isGameOver() || chess.turn() !== 'b') return;
 
-    // Occasional "horror" delay at high corruption
-    const delay = corruptionLevel > 0.6 && Math.random() < 0.3
-      ? 2000 + Math.random() * 2000
-      : 400 + Math.random() * 800;
+    const delay = 600 + Math.random() * 1000;
 
     setTimeout(() => {
-      if (chess.turn() !== 'b' || chess.isGameOver()) return;
-      const moveSan = getAIMove(chess, corruptionLevel);
-      if (!moveSan) return;
+      const moves = chess.moves();
+      if (moves.length === 0) return;
+
+      // Simple pseudo-engine based on difficulty
+      // Higher difficulty = more likely to pick better moves if we had a stockfish worker, 
+      // but here we just simulate "decisive" play.
+      let moveSan;
+      if (difficulty > 10) {
+        // Aggressive/Optimal (simulated)
+        moveSan = moves.find(m => m.includes('#')) || moves.find(m => m.includes('x')) || moves[0];
+      } else {
+        moveSan = moves[Math.floor(Math.random() * moves.length)];
+      }
 
       const result = chess.move(moveSan);
       if (!result) return;
 
-      const wasCapture = !!result.captured;
-      const wasCheck = chess.isCheck();
-
-      if (wasCapture && corruptionLevel > 0.4) triggerShake();
-
       setFen(chess.fen());
-      onLog(getMoveLog(moveSan, wasCapture, wasCheck, corruptionLevel));
+      onLog(getMoveLog(moveSan, !!result.captured, chess.isCheck(), corruptionLevel));
 
-      // Generate dialogue after AI move
-      if (Math.random() < 0.4 + corruptionLevel * 0.3) {
-        setTimeout(() => {
-          onDialogue(generateDialogue(profile, behavior, corruptionLevel));
-        }, 600);
-      }
+      if (!!result.captured && corruptionLevel > 0.4) triggerShake();
 
       setIsThinking(false);
-      moveStartRef.current = Date.now();
 
       if (chess.isGameOver()) {
         if (!gameOverFired.current) {
           gameOverFired.current = true;
-          const r = chess.isCheckmate() ? 'AI wins by checkmate' : 'Draw';
-          onGameOver(r);
+          onGameOver(false); // AI Won
         }
       }
     }, delay);
-  }, [corruptionLevel, profile, behavior, onMove, onDialogue, onLog, onGameOver, setIsThinking]);
+  }, [corruptionLevel, onLog, onGameOver, setIsThinking, difficulty]);
 
-  const onPieceDrop = useCallback(
-    ({ sourceSquare, targetSquare }: { sourceSquare: string; targetSquare: string | null }): boolean => {
-      const chess = chessRef.current;
-      if (chess.turn() !== 'w' || isThinking || !targetSquare) return false;
+  const onPieceDrop = (sourceSquare: string, targetSquare: string): boolean => {
+    const chess = chessRef.current;
+    if (chess.turn() !== 'w' || isThinking) return false;
 
-      const moveTimeMs = Date.now() - moveStartRef.current;
-
-      let result;
-      try {
-        result = chess.move({ from: sourceSquare, to: targetSquare, promotion: 'q' });
-      } catch (err) {
-        return false;
-      }
+    try {
+      const result = chess.move({ from: sourceSquare, to: targetSquare, promotion: 'q' });
       if (!result) return false;
 
-      const wasCapture = !!result.captured;
-      const wasCheck = chess.isCheck();
-
       setFen(chess.fen());
-      onLog(getMoveLog(result.san, wasCapture, wasCheck, corruptionLevel));
-      onMove({ san: result.san, wasCapture, wasCheck, fen: chess.fen() });
+      onLog(getMoveLog(result.san, !!result.captured, chess.isCheck(), corruptionLevel));
 
       if (chess.isGameOver()) {
         if (!gameOverFired.current) {
           gameOverFired.current = true;
-          const r = chess.isCheckmate() ? 'Player wins' : 'Draw';
-          onGameOver(r);
+          onGameOver(true); // Player Won
         }
         return true;
       }
 
       setIsThinking(true);
-      moveStartRef.current = Date.now();
       doAIMove();
       return true;
-    },
-    [isThinking, corruptionLevel, onMove, onLog, onGameOver, doAIMove, setIsThinking]
-  );
+    } catch (err) {
+      return false;
+    }
+  };
 
-  // Corruption visual: slight board tilt at high corruption
-  const boardRotation = corruptionLevel > 0.8 && Math.random() < 0.05 ? `rotate(${(Math.random() - 0.5) * 1.5}deg)` : 'none';
-
-  const darkSquare =
-    corruptionLevel < 0.3
-      ? '#0d1f0d'
-      : corruptionLevel < 0.65
-      ? '#1a0e0e'
-      : '#200505';
-
-  const lightSquare =
-    corruptionLevel < 0.3
-      ? '#1a3a1a'
-      : corruptionLevel < 0.65
-      ? '#2d1414'
-      : '#3a0808';
+  const darkSquare = corruptionLevel < 0.3 ? '#0d1f0d' : corruptionLevel < 0.65 ? '#1a0e0e' : '#200505';
+  const lightSquare = corruptionLevel < 0.3 ? '#1a3a1a' : corruptionLevel < 0.65 ? '#2d1414' : '#3a0808';
 
   return (
-    <div
-      className={`w-full aspect-square transition-transform duration-200 ${shake ? 'scale-[1.01]' : ''}`}
-      style={{ transform: boardRotation }}
-    >
+    <div className={`w-full aspect-square transition-transform duration-200 ${shake ? 'scale-[1.01]' : ''}`}>
       <Chessboard
-        options={{
-          position: fen,
-          onPieceDrop: onPieceDrop,
-          darkSquareStyle: { backgroundColor: darkSquare },
-          lightSquareStyle: { backgroundColor: lightSquare },
-          boardStyle: {
-            borderRadius: '2px',
-            boxShadow:
-              corruptionLevel > 0.5
-                ? `0 0 30px rgba(255,0,0,${corruptionLevel * 0.4})`
-                : `0 0 20px rgba(0,255,65,0.15)`,
-          },
-          animationDurationInMs: 200,
+        position={fen}
+        onPieceDrop={onPieceDrop}
+        customDarkSquareStyle={{ backgroundColor: darkSquare }}
+        customLightSquareStyle={{ backgroundColor: lightSquare }}
+        customBoardStyle={{
+          borderRadius: '2px',
+          boxShadow: corruptionLevel > 0.5 
+            ? `0 0 30px rgba(255,0,0,${corruptionLevel * 0.4})` 
+            : `0 0 20px rgba(0,255,65,0.15)`,
         }}
+        animationDuration={200}
       />
     </div>
   );
