@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { Chess } from 'chess.js';
 import { getMoveLog } from '@/lib/events';
+import type { PieceDropHandlerArgs } from 'react-chessboard';
 
 const Chessboard = dynamic(() => import('react-chessboard').then(m => m.Chessboard), { ssr: false });
 
@@ -46,12 +47,8 @@ export default function ChessBoard({
       const moves = chess.moves();
       if (moves.length === 0) return;
 
-      // Simple pseudo-engine based on difficulty
-      // Higher difficulty = more likely to pick better moves if we had a stockfish worker, 
-      // but here we just simulate "decisive" play.
       let moveSan;
       if (difficulty > 10) {
-        // Aggressive/Optimal (simulated)
         moveSan = moves.find(m => m.includes('#')) || moves.find(m => m.includes('x')) || moves[0];
       } else {
         moveSan = moves[Math.floor(Math.random() * moves.length)];
@@ -76,12 +73,12 @@ export default function ChessBoard({
     }, delay);
   }, [corruptionLevel, onLog, onGameOver, setIsThinking, difficulty]);
 
-  const onPieceDrop = (sourceSquare: string, targetSquare: string): boolean => {
+  const onPieceDrop = (args: PieceDropHandlerArgs): boolean => {
     const chess = chessRef.current;
-    if (chess.turn() !== 'w' || isThinking) return false;
+    if (chess.turn() !== 'w' || isThinking || !args.targetSquare) return false;
 
     try {
-      const result = chess.move({ from: sourceSquare, to: targetSquare, promotion: 'q' });
+      const result = chess.move({ from: args.sourceSquare, to: args.targetSquare, promotion: 'q' });
       if (!result) return false;
 
       setFen(chess.fen());
@@ -103,23 +100,25 @@ export default function ChessBoard({
     }
   };
 
-  const darkSquare = corruptionLevel < 0.3 ? '#0d1f0d' : corruptionLevel < 0.65 ? '#1a0e0e' : '#200505';
-  const lightSquare = corruptionLevel < 0.3 ? '#1a3a1a' : corruptionLevel < 0.65 ? '#2d1414' : '#3a0808';
+  const darkSquareStr = corruptionLevel < 0.3 ? '#0d1f0d' : corruptionLevel < 0.65 ? '#1a0e0e' : '#200505';
+  const lightSquareStr = corruptionLevel < 0.3 ? '#1a3a1a' : corruptionLevel < 0.65 ? '#2d1414' : '#3a0808';
 
   return (
     <div className={`w-full aspect-square transition-transform duration-200 ${shake ? 'scale-[1.01]' : ''}`}>
       <Chessboard
-        position={fen}
-        onPieceDrop={onPieceDrop}
-        customDarkSquareStyle={{ backgroundColor: darkSquare }}
-        customLightSquareStyle={{ backgroundColor: lightSquare }}
-        customBoardStyle={{
-          borderRadius: '2px',
-          boxShadow: corruptionLevel > 0.5 
-            ? `0 0 30px rgba(255,0,0,${corruptionLevel * 0.4})` 
-            : `0 0 20px rgba(0,255,65,0.15)`,
+        options={{
+          position: fen,
+          onPieceDrop,
+          darkSquareStyle: { backgroundColor: darkSquareStr },
+          lightSquareStyle: { backgroundColor: lightSquareStr },
+          boardStyle: {
+            borderRadius: '2px',
+            boxShadow: corruptionLevel > 0.5 
+              ? `0 0 30px rgba(255,0,0,${corruptionLevel * 0.4})` 
+              : `0 0 20px rgba(0,255,65,0.15)`,
+          },
+          animationDurationInMs: 200,
         }}
-        animationDuration={200}
       />
     </div>
   );
