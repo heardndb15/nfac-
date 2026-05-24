@@ -88,9 +88,9 @@ export default function ChessBoard({
   }, [corruptionLevel, profile, behavior, onMove, onDialogue, onLog, onGameOver, setIsThinking]);
 
   const onPieceDrop = useCallback(
-    (sourceSquare: string, targetSquare: string): boolean => {
+    ({ sourceSquare, targetSquare }: { sourceSquare: string; targetSquare: string | null }): boolean => {
       const chess = chessRef.current;
-      if (chess.turn() !== 'w' || isThinking) return false;
+      if (chess.turn() !== 'w' || isThinking || !targetSquare) return false;
 
       const moveTimeMs = Date.now() - moveStartRef.current;
 
@@ -149,20 +149,20 @@ export default function ChessBoard({
       style={{ transform: boardRotation }}
     >
       <Chessboard
-        position={fen}
-        onPieceDrop={onPieceDrop}
-        arePiecesDraggable={!isThinking}
-        isDraggablePiece={({ piece }) => piece && piece[0] === 'w' && !isThinking}
-        customDarkSquareStyle={{ backgroundColor: darkSquare }}
-        customLightSquareStyle={{ backgroundColor: lightSquare }}
-        customBoardStyle={{
-          borderRadius: '2px',
-          boxShadow:
-            corruptionLevel > 0.5
-              ? `0 0 30px rgba(255,0,0,${corruptionLevel * 0.4})`
-              : `0 0 20px rgba(0,255,65,0.15)`,
+        options={{
+          position: fen,
+          onPieceDrop: onPieceDrop,
+          darkSquareStyle: { backgroundColor: darkSquare },
+          lightSquareStyle: { backgroundColor: lightSquare },
+          boardStyle: {
+            borderRadius: '2px',
+            boxShadow:
+              corruptionLevel > 0.5
+                ? `0 0 30px rgba(255,0,0,${corruptionLevel * 0.4})`
+                : `0 0 20px rgba(0,255,65,0.15)`,
+          },
+          animationDurationInMs: 200,
         }}
-        animationDuration={200}
       />
     </div>
   );
