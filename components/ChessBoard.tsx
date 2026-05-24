@@ -149,20 +149,18 @@ export default function ChessBoard({
       style={{ transform: boardRotation }}
     >
       <Chessboard
-        options={{
-          position: fen,
-          onPieceDrop: onPieceDrop,
-          darkSquareStyle: { backgroundColor: darkSquare },
-          lightSquareStyle: { backgroundColor: lightSquare },
-          boardStyle: {
-            borderRadius: '2px',
-            boxShadow:
-              corruptionLevel > 0.5
-                ? `0 0 30px rgba(255,0,0,${corruptionLevel * 0.4})`
-                : `0 0 20px rgba(0,255,65,0.15)`,
-          },
-          animationDurationInMs: 200,
+        position={fen}
+        onPieceDrop={(sourceSquare, targetSquare) => onPieceDrop({ sourceSquare, targetSquare })}
+        customDarkSquareStyle={{ backgroundColor: darkSquare }}
+        customLightSquareStyle={{ backgroundColor: lightSquare }}
+        customBoardStyle={{
+          borderRadius: '2px',
+          boxShadow:
+            corruptionLevel > 0.5
+              ? `0 0 30px rgba(255,0,0,${corruptionLevel * 0.4})`
+              : `0 0 20px rgba(0,255,65,0.15)`,
         }}
+        animationDuration={200}
       />
     </div>
   );
