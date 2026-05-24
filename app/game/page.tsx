@@ -18,6 +18,7 @@ import {
   type PlayerProfile,
 } from '@/lib/aiEngine';
 import { getMoveLog } from '@/lib/events';
+import { GAME_CASES } from '@/lib/cases';
 
 const ChessBoard = dynamic(() => import('@/components/ChessBoard'), { ssr: false });
 
@@ -33,6 +34,16 @@ export default function GamePage() {
   const [psychProfile, setPsychProfile] = useState<ReturnType<typeof generatePsychProfile> | null>(null);
   const [fakeTakeover, setFakeTakeover] = useState(false);
   const [profile, setProfile] = useState<PlayerProfile>(() => loadPlayerProfile());
+  
+  const [activeCase, setActiveCase] = useState<any>(null);
+  const [playerSuspect, setPlayerSuspect] = useState<string | null>(null);
+
+  useEffect(() => {
+    const caseId = localStorage.getItem('chess_exe_case');
+    const suspectId = localStorage.getItem('chess_exe_suspect');
+    if (caseId) setActiveCase(GAME_CASES.find(c => c.id === caseId));
+    if (suspectId) setPlayerSuspect(suspectId);
+  }, []);
 
   const behaviorRef = useRef<BehaviorState>({
     moves: [],
@@ -54,9 +65,20 @@ export default function GamePage() {
   // Periodic AI dialogue
   useEffect(() => {
     const delay = Math.max(5000, 12000 - corruptionLevel * 8000);
-    const iv = setInterval(() => {
+    const iv = setInterval(async () => {
       if (!gameOver) {
-        setDialogue(generateDialogue(profile, behaviorRef.current, corruptionLevel));
+        try {
+          const res = await fetch('/api/ai', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ profile, behavior: behaviorRef.current, corruptionLevel })
+          });
+          const data = await res.json();
+          setDialogue(data.text);
+        } catch (err) {
+          console.error(err);
+          setDialogue(generateDialogue(profile, behaviorRef.current, corruptionLevel));
+        }
       }
     }, delay);
     return () => clearInterval(iv);
@@ -108,13 +130,29 @@ export default function GamePage() {
 
   const handleGameOver = useCallback(
     (result: string) => {
-      setGameOver(result);
+      let finalMessage = result;
+      let aiFinalLine = 'I will remember you.';
+      
+      if (activeCase) {
+        const isPlayerWin = result === 'Player wins';
+        const isCorrectSuspect = playerSuspect === activeCase.correctSuspectId;
+        
+        if (isPlayerWin) {
+          finalMessage = isCorrectSuspect ? 'TARGET CONTAINED. You chose correctly and won.' : 'TARGET ESCAPED. You won, but suspected the wrong person.';
+          aiFinalLine = isCorrectSuspect ? 'I understand you now. You are dangerous.' : 'You are strong, but blind.';
+        } else {
+          finalMessage = 'YOU WERE WRONG. Target eliminated you.';
+          aiFinalLine = isCorrectSuspect ? 'You knew the truth, but lacked the skill.' : 'Wrong suspect. Weak mind.';
+        }
+      }
+      
+      setGameOver(finalMessage);
       const psych = generatePsychProfile(behaviorRef.current);
       setPsychProfile(psych);
-      savePlayerProfile(profile, behaviorRef.current, result);
-      setDialogue('I will remember you.');
+      savePlayerProfile(profile, behaviorRef.current, finalMessage);
+      setDialogue(aiFinalLine);
     },
-    [profile]
+    [profile, activeCase, playerSuspect]
   );
 
   const handleDialogue = useCallback((text: string) => {
@@ -248,7 +286,7 @@ export default function GamePage() {
               </div>
 
               <div className="text-center text-red-400 text-sm italic pt-4 animate-pulse">
-                &ldquo;I will remember you.&rdquo;
+                &ldquo;{dialogue}&rdquo;
               </div>
 
               <div className="flex gap-3 pt-4">

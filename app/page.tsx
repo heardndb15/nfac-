@@ -142,13 +142,13 @@ export default function LandingPage() {
             className="mt-8 flex flex-col items-center gap-3"
           >
             <motion.button
-              onClick={() => router.push('/game')}
+              onClick={() => router.push('/cases')}
               whileHover={{ scale: 1.04 }}
               whileTap={{ scale: 0.96 }}
               className="relative overflow-hidden border-2 border-red-600 text-red-400 px-14 py-4 text-xl font-bold tracking-widest group"
             >
               <span className="relative z-10 group-hover:text-black transition-colors duration-200">
-                ▶ &nbsp;RUN Chess.exe
+                ▶ &nbsp;3 CASES DETECTED
               </span>
               <div className="absolute inset-0 bg-red-600 scale-x-0 group-hover:scale-x-100 transition-transform duration-200 origin-left" />
             </motion.button>
