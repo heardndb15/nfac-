@@ -42,15 +42,15 @@ export const authStore = {
 
   setCurrentUser: (user: User | null) => {
     if (user) {
-      localStorage.setItem('chess_exe_profile', JSON.stringify(user));
+      localStorage.setItem('chess_exe_user', JSON.stringify(user));
     } else {
-      localStorage.removeItem('chess_exe_profile');
+      localStorage.removeItem('chess_exe_user');
     }
   },
 
   getCurrentUser: (): User | null => {
     if (typeof window === 'undefined') return null;
-    const profile = localStorage.getItem('chess_exe_profile');
+    const profile = localStorage.getItem('chess_exe_user');
     return profile ? JSON.parse(profile) : null;
   }
 };
